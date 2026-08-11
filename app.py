@@ -1,5 +1,5 @@
 """
-TaxHub Knowledge Assistant — MVP v2
+TaxHub Knowledge Assistant — MVP v2.2
 A source-cited, hybrid-retrieval Q&A layer over real German tax-advisory
 regulation (Steuerberatungsgesetz / StBerG and Steuerberatervergütungsverordnung / StBVV).
 
@@ -148,53 +148,123 @@ def run_eval(chunks, sources, vectorizer, matrix):
 
 
 # ---------------------------------------------------------------------------
-# UI
+# Page config + global styling
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="TaxHub Knowledge Assistant", page_icon="📊", layout="wide")
 
 st.markdown("""
 <style>
-.block-container {padding-top: 2rem;}
-.source-card {background-color: #f7f7f9; border-left: 4px solid #2563eb;
-              padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 0.6rem;}
+.block-container {padding-top: 2rem; max-width: 1100px;}
+.hero {padding: 1.4rem 1.6rem; border-radius: 12px;
+       background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+       border: 1px solid #334155; margin-bottom: 1.2rem;}
+.hero h1 {margin: 0 0 0.3rem 0; font-size: 1.9rem;}
+.hero p {margin: 0; color: #94a3b8; font-size: 0.95rem;}
+.source-card {background-color: rgba(37, 99, 235, 0.08); border-left: 4px solid #2563eb;
+              padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 0.6rem;}
+.stTabs [data-baseweb="tab-list"] {gap: 6px;}
+.stTabs [data-baseweb="tab"] {padding: 0.5rem 1.1rem; border-radius: 8px 8px 0 0;}
+section[data-testid="stSidebar"] {background-color: #0f172a;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 TaxHub Knowledge Assistant")
-st.caption(
-    "Grounded, source-cited Q&A over German tax-advisory regulation (StBerG & StBVV) — "
-    "a thin, real slice of the Knowledge/Wiki block for a Steuerberater-focused operating hub."
+chunks, sources, vectorizer, matrix = load_knowledge_base()
+n_docs = len(set(s["file"] for s in sources))
+
+# ---------------------------------------------------------------------------
+# Hero header with credibility metrics (instead of a bare title)
+# ---------------------------------------------------------------------------
+
+st.markdown(
+    """
+    <div class="hero">
+      <h1>📊 TaxHub Knowledge Assistant</h1>
+      <p>Grounded, source-cited Q&A over German tax-advisory regulation (StBerG &amp; StBVV) —
+      a thin, real slice of the Knowledge/Wiki block for a Steuerberater-focused operating hub.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Source documents", n_docs, help="Real statute sections, fetched verbatim from gesetze-im-internet.de")
+m2.metric("Indexed passages", len(chunks))
+m3.metric("Laws covered", "2", help="StBerG (professional duties) + StBVV (statutory fee schedule)")
+m4.metric("Grounding accuracy", "—", help="Run the check in the 'Grounding check' tab to see the live score")
+
+# ---------------------------------------------------------------------------
+# Sidebar: explains every control instead of leaving bare widgets on the page
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.markdown("### ⚙️ Retrieval settings")
+    st.caption(
+        "Controls how the assistant searches the knowledge base below. These settings apply "
+        "to every question you ask in the **Ask** tab."
+    )
+    top_k = st.slider(
+        "Sources per answer",
+        min_value=1, max_value=6, value=4,
+        help="How many cited regulatory passages the assistant retrieves and shows for each "
+             "question. More sources give broader context; fewer keep answers tighter and "
+             "more focused on the single best match.",
+    )
+    st.caption(f"Currently retrieving up to **{top_k}** source passage(s) per question.")
+
+    st.divider()
+    st.markdown("### 🧠 Answer mode")
+    if USE_LLM:
+        st.success("LLM synthesis **enabled** — Claude writes a fluent, source-constrained answer.", icon="✅")
+    else:
+        st.info(
+            "**Offline retrieval mode.** No ANTHROPIC_API_KEY is set, so the assistant shows the "
+            "exact regulatory passages it retrieves rather than a generated sentence. Every "
+            "fact still traces to a real, cited source — this mode simply skips the fluent "
+            "write-up step.",
+            icon="ℹ️",
+        )
+
+    st.divider()
+    st.markdown("### 📎 About this MVP")
+    st.caption(
+        "Built for the CITO TaxHub case study. Knowledge base: 17 real sections of the German "
+        "Steuerberatungsgesetz and Steuerberatervergütungsverordnung. See the **About** tab for "
+        "the full methodology."
+    )
+
+# ---------------------------------------------------------------------------
+# Main tabs
+# ---------------------------------------------------------------------------
 
 tab_chat, tab_sources, tab_eval, tab_about = st.tabs(
     ["💬 Ask", "📚 Browse sources", "✅ Grounding check", "ℹ️ About"]
 )
 
-chunks, sources, vectorizer, matrix = load_knowledge_base()
-
 with tab_chat:
-    if not USE_LLM:
-        st.info(
-            "Running in offline retrieval mode (no LLM key configured). Answers show the "
-            "exact regulatory passages retrieved, with sources — set ANTHROPIC_API_KEY in "
-            "the deployment environment to enable synthesized, still-cited answers.",
-            icon="ℹ️",
-        )
+    st.subheader("Ask a question")
+    st.caption(
+        "Try an example below, or type your own. Answers are grounded strictly in the "
+        "knowledge base — if nothing relevant is found, the assistant says so instead of guessing."
+    )
 
     if "history" not in st.session_state:
         st.session_state.history = []
 
     examples = [q["q"] for q in EVAL_SET[:5]]
-    choice = st.selectbox("Try an example question, or type your own below:", ["—"] + examples)
-    query = st.text_input("Ask a question about tax-advisory regulation or fees:",
-                           value="" if choice == "—" else choice, key="query_input")
+    choice = st.selectbox("Example questions", ["—"] + examples)
 
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        ask = st.button("Ask", type="primary")
-    with col2:
-        top_k = st.slider("Sources to retrieve", 1, 6, 4, label_visibility="collapsed")
+    # Widget key depends on `choice` so the text box re-initializes with the
+    # new default value whenever a different example is picked (a fixed key
+    # would make Streamlit ignore `value` after the first render).
+    query = st.text_input(
+        "Or type your own question about tax-advisory regulation or fees:",
+        value="" if choice == "—" else choice,
+        key=f"query_input_{choice}",
+        placeholder="e.g. What is the monthly fee range for bookkeeping under the StBVV?",
+    )
+
+    ask = st.button("Ask", type="primary", use_container_width=False)
 
     if ask and query.strip():
         t0 = time.time()
@@ -208,20 +278,21 @@ with tab_chat:
             if USE_LLM:
                 try:
                     answer = synthesize_with_claude(query, results)
-                    st.markdown("### Answer")
+                    st.markdown("#### Answer")
                     st.write(answer)
                 except Exception as e:
                     st.error(f"LLM synthesis failed ({e}); showing retrieved passages instead.")
 
-            st.markdown(f"### Sources  ·  retrieved in {elapsed*1000:.0f} ms")
+            st.markdown(f"#### Sources  ·  retrieved in {elapsed*1000:.0f} ms")
             for i, r in enumerate(results):
                 law_badge = "🟦 StBVV" if r["source"]["law"] == "StBVV" else "🟩 StBerG"
                 with st.expander(
-                    f"[{i+1}] {law_badge} · {r['source']['title']}  ·  relevance {r['score']:.2f}"
+                    f"[{i+1}] {law_badge} · {r['source']['title']}  ·  relevance {r['score']:.2f}",
+                    expanded=(i == 0),
                 ):
-                    st.write(r["text"])
-                    st.caption(f"cosine={r['cos']:.2f} · lexical overlap={r['lex']:.2f}")
-                    st.markdown(f"[View original source]({r['source']['url']})")
+                    st.markdown(f'<div class="source-card">{r["text"]}</div>', unsafe_allow_html=True)
+                    st.caption(f"cosine similarity = {r['cos']:.2f}  ·  lexical overlap = {r['lex']:.2f}")
+                    st.markdown(f"[View original source ↗]({r['source']['url']})")
 
             st.session_state.history.append({"q": query, "n_sources": len(results)})
 
@@ -231,7 +302,7 @@ with tab_chat:
 
 with tab_sources:
     st.subheader("Full knowledge base")
-    st.caption(f"{len(set(s['file'] for s in sources))} source documents, {len(chunks)} indexed passages.")
+    st.caption(f"{n_docs} source documents, {len(chunks)} indexed passages — every one traceable to an official source.")
     law_filter = st.radio("Filter by law", ["All", "StBerG", "StBVV"], horizontal=True)
     seen_files = set()
     for chunk, src in zip(chunks, sources):
@@ -242,21 +313,27 @@ with tab_sources:
         seen_files.add(src["file"])
         with st.expander(f"{src['title']}"):
             st.write(chunk.split("\n", 1)[1] if "\n" in chunk else chunk)
-            st.markdown(f"[Official source]({src['url']})")
+            st.markdown(f"[Official source ↗]({src['url']})")
 
 with tab_eval:
     st.subheader("Grounding self-check")
     st.caption(
         "An automated regression test: for each question, does the retriever surface the "
-        "exact statute paragraph it should? This is how we (and any Kanzlei evaluating this) "
+        "exact statute paragraph it should? This is how we — and any Kanzlei evaluating this — "
         "verify the assistant isn't guessing."
     )
-    if st.button("Run grounding check"):
+    if st.button("▶ Run grounding check", type="primary"):
         hits, total, rows = run_eval(chunks, sources, vectorizer, matrix)
-        st.metric("Retrieval accuracy", f"{hits}/{total}", f"{100*hits/total:.0f}%")
+        pct = 100 * hits / total
+        c1, c2 = st.columns(2)
+        c1.metric("Retrieval accuracy", f"{hits}/{total}")
+        c2.metric("Percentage correct", f"{pct:.0f}%")
+        if pct == 100:
+            st.success("All grounding checks passed — every answer traced to its correct source.", icon="✅")
         st.table(rows)
 
 with tab_about:
+    st.subheader("Methodology")
     st.markdown("""
     **Knowledge base**: 17 real regulatory sections from the *Steuerberatungsgesetz* (StBerG)
     and *Steuerberatervergütungsverordnung* (StBVV), fetched verbatim from the official German
@@ -269,7 +346,7 @@ with tab_about:
 
     **Why this scope**: the case calls for something "grounded in real content, with sources,
     not a hardcoded demo." StBerG and StBVV are the two documents every German Steuerberater
-    already knows by heart — which makes it trivial for a domain expert to verify this assistant
+    already knows by heart — which makes it easy for a domain expert to verify this assistant
     isn't inventing paragraphs or fees. A production TaxHub would ingest a specific Kanzlei's own
     engagement letters, past cases, and internal templates on top of this statutory backbone.
 
