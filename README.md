@@ -18,7 +18,7 @@ part of a case study for [CITO GmbH](https://cito.vision).
 
 ## 🚀 Live Demo
 
-**[→ Open the live app](#)** *(replace with your Streamlit Community Cloud URL)*
+**[→ Open the live app](https://taxapp-mvp.streamlit.app/)**
 
 No installation needed — ask a real question about German tax-advisory fees or professional
 duties and see it answered with an exact citation back to the statute paragraph it came from.
@@ -98,7 +98,7 @@ it came from.
 ## Quickstart
 
 ```bash
-git clone https://github.com/<your-username>/taxhub-mvp.git
+git clone https://github.com/Anniii001/taxhub-mvp.git
 cd taxhub-mvp
 pip install -r requirements.txt
 streamlit run app.py
